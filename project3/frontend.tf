@@ -3,7 +3,9 @@ resource "aws_instance" "frontend" {
   instance_type          = var.instance_type
   subnet_id              = module.vpc.private_subnets[0]
   vpc_security_group_ids = [aws_security_group.frontend_sg.id]
-  user_data              = file("${path.module}/user-data-frontend.sh")
+  user_data              = templatefile("${path.module}/user-data-frontend.sh", {
+    internal_alb_dns = aws_lb.internal.dns_name
+  })
 
   tags = {
     Name = "frontend-instance"
