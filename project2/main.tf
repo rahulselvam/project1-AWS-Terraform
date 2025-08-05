@@ -2,12 +2,10 @@
 # SPDX-License-Identifier: MPL-2.0
 
 provider "aws" {
-  region = "eu-central-1"
+  region = var.aws_region
 
   default_tags {
-    tags = {
-      hashicorp-learn = "aws-asg"
-    }
+    tags = var.common_tags
   }
 }
 
@@ -19,13 +17,15 @@ module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "6.0.1"
 
-  name = "main-vpc"
-  cidr = "10.0.0.0/16"
+  name = "${var.project_name}-${var.environment}-vpc"
+  cidr = var.vpc_cidr
 
   azs                  = data.aws_availability_zones.available.names
-  public_subnets       = ["10.0.2.0/24", "10.0.4.0/24", "10.0.6.0/24"]
-  private_subnets      = ["10.0.1.0/24", "10.0.3.0/24", "10.0.5.0/24"]
-  enable_nat_gateway   = true
+  public_subnets       = var.public_subnets
+  private_subnets      = var.private_subnets
+  database_subnets     = var.database_subnets
+  create_database_subnet_group = true
+  enable_nat_gateway   = var.enable_nat_gateway
   single_nat_gateway   = true
   enable_vpn_gateway   = false
   enable_dns_hostnames = true
@@ -37,7 +37,7 @@ data "aws_ami" "amazon_linux" {
   owners      = ["amazon"] # Or your AWS account ID
   filter {
     name   = "name"
-    values = ["al2023-ami-2023.8.20250721.2-kernel-6.1-x86_64"] # Filter for Amazon Linux 2 AMIs
+    values = [var.ami_name]
   }
   filter {
     name   = "virtualization-type"
@@ -50,13 +50,10 @@ data "aws_ami" "amazon_linux" {
 }
 
 resource "aws_launch_template" "project2" {
-  name_prefix     = "project2-aws-asg-"
+  name_prefix     = "${var.project_name}-${var.environment}-asg-"
   image_id        = data.aws_ami.amazon_linux.id
-  instance_type   = "t2.micro"
-  # network_interfaces {
-  #   associate_public_ip_address = true
-  #   security_groups = [aws_security_group.project2_instance.id]
-  # }
+  instance_type   = var.instance_type
+  key_name        = var.key_pair_name != "" ? var.key_pair_name : null
   user_data       = filebase64("${path.module}/user-data.sh")
   vpc_security_group_ids = [aws_security_group.project2_instance.id]
   lifecycle {
@@ -65,10 +62,10 @@ resource "aws_launch_template" "project2" {
 }
 
 resource "aws_autoscaling_group" "project2" {
-  name                 = "project2"
-  min_size             = 1
-  max_size             = 3
-  desired_capacity     = 1
+  name             = "${var.project_name}-${var.environment}-asg"
+  min_size         = var.asg_min_size
+  max_size         = var.asg_max_size
+  desired_capacity = var.asg_desired_capacity
   launch_template {
     id      = aws_launch_template.project2.id
     version = "$Latest"
@@ -80,13 +77,22 @@ resource "aws_autoscaling_group" "project2" {
 
   tag {
     key                 = "Name"
-    value               = "project2"
+    value               = "${var.project_name}-${var.environment}-instance"
     propagate_at_launch = true
+  }
+
+  dynamic "tag" {
+    for_each = var.common_tags
+    content {
+      key                 = tag.key
+      value               = tag.value
+      propagate_at_launch = true
+    }
   }
 }
 
 resource "aws_lb" "project2" {
-  name               = "project2-asg-lb"
+  name               = "${var.project_name}-${var.environment}-lb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.project2_lb.id]
@@ -105,7 +111,7 @@ resource "aws_lb_listener" "project2" {
 }
 
 resource "aws_lb_target_group" "project2" {
-  name     = "asg-project2"
+  name     = "${var.project_name}-${var.environment}-tg"
   port     = 80
   protocol = "HTTP"
   vpc_id   = module.vpc.vpc_id
@@ -118,7 +124,7 @@ resource "aws_autoscaling_attachment" "project2" {
 }
 
 resource "aws_security_group" "project2_instance" {
-  name = "asg-project2-instance"
+  name = "${var.project_name}-${var.environment}-instance-sg"
   ingress {
     from_port       = 80
     to_port         = 80
@@ -144,7 +150,7 @@ resource "aws_security_group" "project2_instance" {
 }
 
 resource "aws_security_group" "project2_lb" {
-  name = "asg-project2-lb"
+  name = "${var.project_name}-${var.environment}-lb-sg"
   ingress {
     from_port   = 80
     to_port     = 80
@@ -160,4 +166,45 @@ resource "aws_security_group" "project2_lb" {
   }
 
   vpc_id = module.vpc.vpc_id
+}
+
+resource "aws_security_group" "rds" {
+  name = "${var.project_name}-${var.environment}-rds-sg"
+  
+  ingress {
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.project2_instance.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  vpc_id = module.vpc.vpc_id
+}
+
+resource "aws_db_instance" "main" {
+  identifier     = "${var.project_name}-${var.environment}-db"
+  engine         = "mysql"
+  engine_version = "8.0"
+  instance_class = var.db_instance_class
+  allocated_storage = var.db_allocated_storage
+  
+  db_name  = var.db_name
+  username = var.db_username
+  manage_master_user_password = var.manage_master_user_password
+  
+  vpc_security_group_ids = [aws_security_group.rds.id]
+  db_subnet_group_name   = module.vpc.database_subnet_group
+  
+  skip_final_snapshot = true
+  
+  tags = {
+    Name = "${var.project_name}-${var.environment}-database"
+  }
 }
