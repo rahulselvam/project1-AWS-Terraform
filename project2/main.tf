@@ -26,6 +26,7 @@ module "vpc" {
   public_subnets       = ["10.0.2.0/24", "10.0.4.0/24", "10.0.6.0/24"]
   private_subnets      = ["10.0.1.0/24", "10.0.3.0/24", "10.0.5.0/24"]
   enable_nat_gateway   = true
+  single_nat_gateway   = true
   enable_vpn_gateway   = false
   enable_dns_hostnames = true
   enable_dns_support   = true
@@ -73,6 +74,7 @@ resource "aws_autoscaling_group" "project2" {
     version = "$Latest"
   }
   vpc_zone_identifier  = module.vpc.private_subnets
+  #vpc_zone_identifier  = module.vpc.public_subnets
 
   health_check_type    = "ELB"
 
@@ -88,7 +90,6 @@ resource "aws_lb" "project2" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.project2_lb.id]
-  #subnets            = [for subnet in module.vpc.public_subnets : subnet.id]
   subnets =          module.vpc.public_subnets
 }
 
