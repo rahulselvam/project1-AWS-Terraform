@@ -8,9 +8,9 @@ output "backend_alb_dns" {
   description = "Internal DNS of the backend ALB"
 }
 
-output "frontend_public_ip" {
-  value = aws_instance.frontend.public_ip
-  description = "Public IP of the frontend EC2 instance"
+output "autoscaling_group_name" {
+  value = aws_autoscaling_group.frontend.name
+  description = "Name of the frontend Auto Scaling Group"
 }
 
 output "backend_private_ip" {

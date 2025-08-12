@@ -1,0 +1,1 @@
+# Monitoring focused on autoscaling only
